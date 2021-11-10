@@ -1,0 +1,364 @@
+---
+title: "Spotify daily top 200 songs"
+date: "10 11 2021"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: true
+  
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(data.table)
+library(RColorBrewer)
+library(wordcloud)
+library(kableExtra)
+
+spotify <- read.csv2("~/Documents/OneDrive/Musik/SpotifyTop200/SpotifyDailyTop200-2017_21.csv", sep="#")
+#spotify <- read.csv2("~/OneDrive/Musik/SpotifyDailyTop200-2017_21.csv", sep="#")
+
+```
+
+On this chapter I will explore the following dataset available on kaggle: 
+
+- [Spotify daily top 200 songs with genres 2017-2021](https://www.kaggle.com/ivannatarov/spotify-daily-top-200-songs-with-genres-20172021)
+
+It contains information on the daily top 200 tracks listened to by users of the Spotify digital platform around the world.
+
+Here a quick glance at the data as is:
+
+```{r echo=FALSE}
+kable(head(spotify)) %>%
+  kable_styling(bootstrap_options = "striped", font_size = 10, full_width = F)
+```
+**Note:** For this exercise 2021 will not be included, as the year had not ended when closing this page.  
+  
+  
+## First impressions
+  
+The amount of streams has been increasing over the years as willingnes to pay for the service also increases and anti-piracy measures are being enforced in most countries.
+  
+We see more artists reaching the top 200, always with many cool songs to move us.
+
+```{r echo=FALSE, fig.show='hold', out.width='33%'}
+
+spotify<-mutate(spotify,Year=year(spotify$Date))
+spotify<-mutate(spotify,Month=month(spotify$Date))
+spotify<-subset(spotify, Year < 2021)
+
+aggregate(spotify$Streams, by=list(spotify$Year), FUN=sum)%>%
+  mutate(x = x/1000000000) %>%
+  ggplot(aes(factor(Group.1),x,alpha=0.3, fill=factor(Group.1)))+
+  geom_col()+
+  geom_text(aes(label=round(x, 1)), size= 8, position = position_stack(vjust = 0.5))+
+  labs(title = "Billion of Streams each year...", y=NULL, x=NULL)+
+  theme_light()+
+  theme(text = element_text(size = 20),legend.position = "none", axis.ticks.x = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  scale_fill_manual(values = c("#25bf1d","#25bf1d","#25bf1d","#25bf1d","#25bf1d"), aesthetics = "fill")
+
+spotify %>%
+  group_by(Year) %>%
+  summarise(ArtistCount = n_distinct(Artist)) %>%
+  ggplot(aes(factor(Year), ArtistCount, alpha=0.3, fill=factor(Year))) +
+  geom_col()+
+  geom_text(aes(label=ArtistCount), size= 8, position = position_stack(vjust = 0.5))+
+  labs(title = "... of talented Artists...", y=NULL, x=NULL)+
+  theme_light()+
+  theme(text = element_text(size = 20), legend.position = "none", axis.ticks.x = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  scale_fill_manual(values = c("#25bf1d","#25bf1d","#25bf1d","#25bf1d","#25bf1d"), aesthetics = "fill")
+
+spotify %>%
+  group_by(Year) %>%
+  summarise(TrackCount = n_distinct(Track.Name))%>%
+  ggplot(aes(factor(Year), TrackCount, alpha=0.3, fill=factor(Year))) +
+  geom_col()+
+  geom_text(aes(label=TrackCount), size= 8, position = position_stack(vjust = 0.5))+
+  labs(title = "... with inspiring songs", y=NULL, x=NULL)+
+  theme_light()+
+  theme(text = element_text(size = 20), legend.position = "none", axis.ticks.x = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  scale_fill_manual(values = c("#25bf1d","#25bf1d","#25bf1d","#25bf1d","#25bf1d"), aesthetics = "fill")
+```
+
+These artists made it to the top 3 of each year  
+  
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='100%'}
+top3 <- spotify %>%
+  group_by(Year, Artist) %>%
+  summarise(TotalStreamsYr = sum(Streams)) %>%
+  arrange(Year, desc(TotalStreamsYr)) %>%
+  top_n(3) %>%
+  left_join(spotify %>%
+              group_by(Year, Artist, Track.Name) %>%
+              summarise(TrackStreamsYr = sum(Streams))
+            , by=c("Year", "Artist")) %>%
+  arrange(Year, desc(TotalStreamsYr), desc(TrackStreamsYr)) %>%
+  mutate(TotalStreamsYr=round(TotalStreamsYr/1000000000,1), TrackStreamsYr=round(TrackStreamsYr/1000000000,1))
+
+top3 <- setDT(top3)[ , .SD[which.max(TrackStreamsYr)], by = c("Year", "Artist")]
+  
+ggplot(top3, aes(reorder(Artist, -TotalStreamsYr), TotalStreamsYr, fill=factor(Year), group=Year)) + 
+  geom_bar(stat = "Identity", position = "stack", alpha=0.35) +
+  geom_text(aes(label=TotalStreamsYr), size=2, angle=45)+
+  geom_col(aes(Artist,TrackStreamsYr, fill=factor(Year)))+
+  geom_text(aes(label=paste(Track.Name,TrackStreamsYr, sep = "\n")), position = position_stack(vjust = 0.1), size=2, angle=45)+
+  theme_light()+
+  theme(text = element_text(size = 8),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank(),axis.text.x=element_text(angle=90, hjust=1))+
+  labs(title = "Top 3 Artists", y="Streams (bn)", x=NULL)+
+  facet_grid(~Year, scales = "free")
+```
+
+## Genres in a cloud
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Genres <- spotify #[spotify$Position<=10,]
+Genres <- aggregate(x=Genres$Streams, by=list(Genres$Year, Genres$Genre), FUN=sum)
+colnames(Genres) <- c("Year","Genre","Streams")
+Genres$Genre <- str_sub(Genres$Genre,2, -2)
+Genres$Genre <- str_remove_all(Genres$Genre,"'")
+Genres$Genre <- str_replace_all(Genres$Genre, ", ", ",")
+TopGenre <- data.frame(str_split(Genres$Genre, ",", simplify = TRUE))
+TopGenre <- data.frame(bind_cols(TopGenre, Genres))
+TopGenre$Genre <-  NULL
+TopGenre <- tidyr::gather(TopGenre,key="OriginalCol",value="Genre",-Year, -Streams)
+TopGenre$OriginalCol <- NULL
+TopGenre <-  aggregate(x=TopGenre$Streams, by=list(TopGenre$Year, TopGenre$Genre), FUN=sum)
+colnames(TopGenre) <-  c("Year","Genre","Streams")
+TopGenre <- TopGenre[TopGenre$Genre != "",]
+rm(Genres)
+TopGenreTotal <- aggregate(x=TopGenre$Streams, by=list(TopGenre$Genre), FUN=sum)
+
+wordcloud(words = TopGenreTotal$Group.1, freq = TopGenreTotal$x, max.words = 100,colors=brewer.pal(12, "Paired"))
+```
+  
+It's hard to see the forest for the trees, so let's pick the top 3 Genres for each year
+  
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='70%'}
+TopGenre %>%
+  arrange(Year, desc(Streams)) %>%
+  top_n(12) %>%
+  mutate(Streams=round(Streams/1000000000,1)) %>%
+  ggplot(aes(Year, Streams, fill=Genre)) +
+  geom_col(alpha=0.5)+
+  geom_text(aes(label=paste(Genre,Streams, sep = "\n")), position = position_stack(vjust = 0.5), size=4)+
+  theme_light()+
+  theme(text = element_text(size = 12),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  labs(title = "Top 3 Genres per year", y="Streams (bn)", x=NULL, fill="Top genre")
+```
+
+## What else?
+### Extending the dataset
+#### Scraping the web
+I realised in the dataset there was no indication to the duration of the track, so I decided to write a little webscraping code to get this info from the [Last.fm](www.last.fm) database.
+  
+  Here the code I wrote if you're into techy stuff. If not, just scroll down =P
+  
+```{r echo=TRUE, eval=FALSE}
+# Import the necessary libraries 
+library(rvest)
+library(dplyr)
+library(stringr)
+
+# Get the Track and Artists names
+DurationList <- unique(spotify[c("Track.Name","Artist")])
+DurationList$Duration <-  0
+
+# Replace some characters
+DurationList$Track.Name <- str_replace_all(DurationList$Track.Name, " ", "+")
+DurationList$Artist <- str_replace_all(DurationList$Artist, " ", "+")
+DurationList$Track.Name <- str_replace_all(DurationList$Track.Name,"'","%27")
+DurationList$Track.Name <- str_replace_all(DurationList$Track.Name,"\"","%28")
+
+# Run over the Last.fm search pages and retrieve the Duration of each Track
+for (i in 1:5149){
+  tryCatch({
+    link = paste0("https://www.last.fm/search?q=", DurationList[i,1], "+", DurationList[i,2])
+    page = read_html(link)
+    DurationList[i,3] <- page %>% html_nodes(".chartlist-duration") %>% .[1] %>% html_text() %>%
+      str_replace_all(" ", "") %>% str_replace_all("\\n", "")
+    print(paste0(i, " ",DurationList[i,2], " ",DurationList[i,1]," ", DurationList[i,3]))
+  }, error = function(e){cat("ERROR :",conditionMessage(e), "\n")})
+}
+
+# Get the duration in seconds as the mm:ss format wouldn't allow for calculations
+DurationList$DurationSec <- str_split(DurationList$Duration, pattern = ":", simplify = TRUE)
+DurationList$DurationSec <- as.numeric(DurationList$DurationSec[,1])*60 + as.numeric(DurationList$DurationSec[,2])
+
+# Now revert the character replacements
+DurationList$Track.Name <- str_replace_all(DurationList$Track.Name, "\\+", " ")
+DurationList$Artist <- str_replace_all(DurationList$Artist, "\\+", " ")
+DurationList$Track.Name <- str_replace_all(DurationList$Track.Name,"%27","'")
+DurationList$Track.Name <- str_replace_all(DurationList$Track.Name,"%28","\"")
+
+# Then expand the original dataset by joining with the newly harvested data
+tempos <- left_join(spotify,lista, by=c("Track.Name", "Artist"))
+# Remove some of the NAs from the scraping
+tempos <- tempos[!is.na(tempos$DurationSec),]
+```
+and here a glance at the final result
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(readr)
+lista <- read.csv2("lista3.csv")
+library(stringr)
+lista$DurationSec <- str_split(lista$Duration, pattern = ":", simplify = TRUE)
+lista$DurationSec <- as.numeric(lista$DurationSec[,1])*60 + as.numeric(lista$DurationSec[,2])
+
+lista$Track.Name <- str_replace_all(lista$Track.Name, "\\+", " ")
+lista$Artist <- str_replace_all(lista$Artist, "\\+", " ")
+lista$Track.Name <- str_replace_all(lista$Track.Name,"%27","'")
+lista$Track.Name <- str_replace_all(lista$Track.Name,"%28","\"")
+
+tempos <- left_join(spotify,lista, by=c("Track.Name", "Artist"))
+tempos <- tempos[!is.na(tempos$DurationSec),]
+tempos$X <- NULL
+kable(head(tempos)) %>%
+  kable_styling(bootstrap_options = "striped", font_size = 10, full_width = F)
+```
+
+### Songs that won't last forever
+So now let's check the newly acquired values and how they relate to the other variables.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='70%'}
+tempos %>%
+  group_by(Artist, Track.Name, DurationSec) %>%
+  summarise(totalStreamsYr = sum(Streams)) %>%
+  mutate(totalStreamsYr=round(totalStreamsYr/1000000,1)) %>%
+  ggplot(aes(DurationSec,totalStreamsYr)) +
+  geom_point(aes(alpha=0.01))+
+  theme(legend.position = "none")+
+  theme_light()+
+  labs(title = "Streams per Song", subtitle = "Song legth", y="Total Streams (M)", x="Length (s)", caption = "Each dot represents one singular song.")+
+  theme(text = element_text(size = 10),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank(), plot.caption.position =  "plot", plot.caption = element_text(hjust = 0, face= "italic"))
+```
+
+That looks quite cluttered, so let's build a quick histogram to see how many times a given track length occurs in the new dataset.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='70%'}
+tempos %>%
+  ggplot(aes(DurationSec))+
+  geom_histogram(aes(y =..density.., alpha=1), binwidth = 20)+
+  stat_function(fun = dnorm, args = list(mean = mean(tempos$DurationSec), sd = sd(tempos$DurationSec)), col="red")+
+  theme(legend.position = "none")+
+  theme_light()+
+  theme(text = element_text(size = 10),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  labs(title = "Histogram with normal density curve", y="Density", x="Length (s)")
+```
+
+It may be interesting to break down the density per year.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='70%'}
+tempos %>%
+  group_by(Year, Artist, Track.Name, DurationSec) %>%
+  summarise(totalStreamsYr = sum(Streams)) %>%
+  mutate(totalStreamsYr=round(totalStreamsYr/1000,1)) %>%
+  ggplot(aes(x=DurationSec, colour=as.factor(Year), fill=as.factor(Year))) +
+  geom_density(alpha=0.03)+
+  xlim(0,400)+
+  theme_light()+
+  theme(text = element_text(size = 10),legend.position = "bottom", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  labs(title = "Track length distribution", y="Density", x="Length (s)", colour="Year", fill="Year")
+```
+
+Looks like the average track length has been decreasing in the year on year comparison, the following boxplots may make it clearer:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='70%'}
+tempos %>%
+  filter(DurationSec<400) %>%
+  group_by(Year, Artist, Track.Name, DurationSec) %>%
+  summarise(totalStreamsYr = sum(Streams)) %>%
+  mutate(totalStreamsYr=round(totalStreamsYr/1000000,1)) %>%
+  ggplot(aes(totalStreamsYr, DurationSec, colour=as.factor(Year))) +
+  geom_boxplot(notch = TRUE) +
+  facet_grid(~Year, scales = "free")+
+  theme_light()+
+  theme(text = element_text(size = 10),legend.position = "bottom", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+
+  labs(title = "Track length distribution", y="Length (s)", x="Streams (M)", color="Year")
+```
+
+An here the explicit year on year decrease in the average length of the tracks:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+tempos %>%
+  group_by(Year, Artist, Track.Name, DurationSec) %>%
+  summarise(totalStreamsYr = sum(Streams)) %>%
+  mutate(totalStreamsYr=round(totalStreamsYr/1000000,1)) %>%
+  group_by(Year) %>%
+  summarise(Average_Length=round(mean(DurationSec), digits = 1)) %>%
+  mutate(YoY = round((Average_Length-lag(Average_Length))/Average_Length*100, digits = 1)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", font_size = 10, full_width = F, position = "left")
+```
+
+So all in all, we have more songs in the daily Top 200 streamed songs on Spotify, however the average duration has been shrinking over the past four years.
+
+### What are the odds?
+Only `r paste(round((tempos%>%
+  filter(Position==1)%>%
+  distinct(Track.Name, Artist, Genre, DurationSec) %>%
+  nrow()
+/
+tempos%>%
+  distinct(Track.Name, Artist, Genre, DurationSec) %>%
+  nrow()
+)*100, digits=2),"%")` of the songs make it to the very top, and `r paste(round((tempos%>%
+  filter(Position<=10)%>%
+  distinct(Track.Name, Artist, Genre, DurationSec) %>%
+  nrow()
+/
+tempos%>%
+  distinct(Track.Name, Artist, Genre, DurationSec) %>%
+  nrow()
+)*100, digits=2),"%")` enter the top 10. But does it relate in any way with the length of the track? Looking at the charts below, seems plausible to assume that.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width='50%'}
+tempos %>%
+  filter(DurationSec <= 500) %>%
+  group_by(DurationSec) %>%
+  summarise(HighestPosition = min(Position)) %>%
+  ggplot(aes(DurationSec, HighestPosition)) +
+  geom_point(aes(alpha=0.5), position = "jitter") +
+  geom_density2d_filled(aes(alpha=0.5)) +
+  geom_density_2d(size = 0.25, colour = "black") +
+  scale_y_reverse(n.breaks=10) +
+  theme(legend.position = "none")+
+  theme_light()+
+  labs(title = "Heatmap", subtitle = "Length vs Ranking Position", y="Ranking (1-200)", x="Length (s)")+
+  theme(text = element_text(size = 15),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank(), plot.caption.position =  "plot", plot.caption = element_text(hjust = 0, face= "italic"))
+
+tempos %>%
+  group_by(DurationSec) %>%
+  summarise(HighestPosition = min(Position)) %>%
+  filter(HighestPosition <= 10) %>%
+  ggplot(aes(DurationSec, HighestPosition)) +
+  geom_point(aes(alpha=0.5), position = "jitter") +
+  geom_density2d_filled(aes(alpha=0.5)) +
+  geom_density_2d(size = 0.25, colour = "black") +
+  scale_y_reverse(n.breaks=10) +
+  theme(legend.position = "none")+
+  theme_light()+
+  labs(title = "Heatmap (Top 10)", subtitle = "Length vs Ranking Position", y="Ranking (1-10)", x="Length (s)")+
+  theme(text = element_text(size = 15),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank(), plot.caption.position =  "plot", plot.caption = element_text(hjust = 0, face= "italic"))
+```
+
+I went on and calculated the probabilities of a given track length to join the top 10 for at least one day then plotted that into the chart below:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Probs <- tempos %>%
+  group_by(DurationSec) %>%
+  summarise(HighestPosition = min(Position), Count= n()) %>%
+  filter(HighestPosition<=10)%>%
+  mutate(Probability = (Count / 254071)*100) %>%
+  ggplot(aes(DurationSec, Probability)) +
+  geom_point(aes(alpha=20)) +
+  geom_density_2d(size = 0.25, colour = "grey", alpha=0.5) +
+  theme_light() +
+  labs(title = "Probability distribution", subtitle = "Tracks that got into the top 10", y="Probability", x="Length (s)") +
+  theme(text = element_text(size = 10),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank(), plot.caption.position =  "plot", plot.caption = element_text(hjust = 0, face= "italic"))
+```
+
+Hope you enjoyed this overview. The code used for building this report can be found on my [GitHub](https://github.com/AllysonAOdS/Portfolio).
