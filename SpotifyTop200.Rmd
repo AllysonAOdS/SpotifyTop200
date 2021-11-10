@@ -361,4 +361,4 @@ Probs <- tempos %>%
   theme(text = element_text(size = 10),legend.position = "none", axis.ticks.x = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank(), plot.caption.position =  "plot", plot.caption = element_text(hjust = 0, face= "italic"))
 ```
 
-Hope you enjoyed this overview. The code used for building this report can be found on my [GitHub](https://github.com/AllysonAOdS/Portfolio).
+Hope you enjoyed this overview. The code used for building this report can be found on my [GitHub](https://github.com/AllysonAOdS/SpotifyTop200).
